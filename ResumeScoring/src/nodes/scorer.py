@@ -8,7 +8,6 @@ from src.config import get_openai_client, MODEL_NAME, TEMPERATURE, MAX_TOKENS
 
 client = get_openai_client()
 
-# Промт (без изменений, такой же как был)
 SCORING_PROMPT = """
 Ты — эксперт по оценке IT-резюме. Оцени кандидата по 4 критериям.
 

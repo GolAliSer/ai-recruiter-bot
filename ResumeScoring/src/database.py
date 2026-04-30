@@ -3,6 +3,7 @@
 import sqlite3
 import json
 import os
+import bcrypt
 from datetime import datetime
 from src.config import DB_PATH
 
@@ -14,17 +15,19 @@ def init_database():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Таблица пользователей
+    # Таблица пользователей (с паролем)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE,
+            password_hash TEXT,
+            is_active INTEGER DEFAULT 1,
             first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
 
-    # Таблица оценок резюме (с новыми колонками)
+    # Таблица оценок резюме
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS evaluations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,13 +58,100 @@ def init_database():
         )
     ''')
 
+    # Таблица для RAG примеров (подготовка для фазы 2)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS rag_examples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            resume_text TEXT,
+            scores_json TEXT,
+            total_score INTEGER DEFAULT 0,
+            recommendation TEXT DEFAULT '',
+            rating INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     conn.commit()
     conn.close()
     print("✅ База данных инициализирована")
 
 
+def hash_password(password: str) -> str:
+    """Хеширует пароль"""
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """Проверяет пароль"""
+    return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
+
+
+def register_user(username: str, password: str) -> tuple:
+    """
+    Регистрирует нового пользователя.
+    Возвращает (success, user_id, message)
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Проверяем, существует ли пользователь
+    cursor.execute('SELECT id FROM users WHERE username = ?', (username,))
+    if cursor.fetchone():
+        conn.close()
+        return False, None, "Пользователь с таким именем уже существует"
+
+    # Создаём нового пользователя
+    password_hash = hash_password(password)
+    cursor.execute('''
+        INSERT INTO users (username, password_hash)
+        VALUES (?, ?)
+    ''', (username, password_hash))
+
+    user_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return True, user_id, "Регистрация успешна"
+
+
+def login_user(username: str, password: str) -> tuple:
+    """
+    Вход пользователя.
+    Возвращает (success, user_id, message)
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT id, password_hash, is_active FROM users WHERE username = ?', (username,))
+    result = cursor.fetchone()
+
+    if not result:
+        conn.close()
+        return False, None, "Неверное имя пользователя или пароль"
+
+    user_id, password_hash, is_active = result
+
+    if not is_active:
+        conn.close()
+        return False, None, "Учётная запись заблокирована"
+
+    if not verify_password(password, password_hash):
+        conn.close()
+        return False, None, "Неверное имя пользователя или пароль"
+
+    # Обновляем время последнего входа
+    cursor.execute('UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE id = ?', (user_id,))
+    conn.commit()
+    conn.close()
+
+    return True, user_id, f"Добро пожаловать, {username}!"
+
+
 def get_or_create_user(username: str) -> int:
-    """Получает или создает пользователя, возвращает user_id"""
+    """
+    [DEPRECATED] Старая функция для простой авторизации.
+    Оставлена для совместимости, но не используется.
+    """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -72,7 +162,7 @@ def get_or_create_user(username: str) -> int:
         user_id = result[0]
         cursor.execute('UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE id = ?', (user_id,))
     else:
-        cursor.execute('INSERT INTO users (username) VALUES (?)', (username,))
+        cursor.execute('INSERT INTO users (username, password_hash) VALUES (?, ?)', (username, ""))
         user_id = cursor.lastrowid
 
     conn.commit()

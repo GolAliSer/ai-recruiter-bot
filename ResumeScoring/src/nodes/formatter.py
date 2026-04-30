@@ -5,47 +5,57 @@ from src.state import ResumeState
 
 def formatter_node(state: ResumeState) -> ResumeState:
     """Форматирование вывода для пользователя"""
-    s = state["scores"]
+
+    # Безопасное получение значений
+    s = state.get("scores", {})
+    role_confidence = state.get("role_confidence", 50)
+    role_reasoning = state.get("role_reasoning", "Анализ выполнен")
+    total_score = state.get("total_score", 0)
+    recommendation = state.get("recommendation", "Consider")
+    detected_role = state.get("detected_role", "Не определена")
+    file_name = state.get("file_name", "Неизвестный файл")
+    word_count = state.get("word_count", 0)
+    explanation = state.get("explanation", "Нет объяснения")
 
     rec_emoji = {
         "Strong Hire": "🟢",
         "Hire": "🟡",
         "Consider": "🟠",
         "Pass": "🔴"
-    }.get(state["recommendation"], "⚪")
+    }.get(recommendation, "⚪")
 
     def progress_bar(value, max_val, width=15):
-        filled = int(width * value / max_val)
+        filled = int(width * value / max_val) if max_val > 0 else 0
         return "█" * filled + "░" * (width - filled)
 
     # Визуализация уверенности
-    confidence_bar = "█" * int(state.get("role_confidence", 50) / 10) + "░" * (
-                10 - int(state.get("role_confidence", 50) / 10))
+    confidence_filled = int(role_confidence / 10)
+    confidence_bar = "█" * confidence_filled + "░" * (10 - confidence_filled)
 
     output = f"""
 **📊 РЕЗУЛЬТАТ ОЦЕНКИ**
 
-**Кандидат:** `{state['file_name']}`
-**Предполагаемая роль:** {state['detected_role']}
-**Уверенность:** {state.get('role_confidence', 50)}% [{confidence_bar}]
-**Обоснование:** {state.get('role_reasoning', 'Анализ выполнен')}
-**Объем текста:** {state['word_count']} слов
+**Кандидат:** `{file_name}`
+**Предполагаемая роль:** {detected_role}
+**Уверенность:** {role_confidence}% [{confidence_bar}]
+**Обоснование:** {role_reasoning}
+**Объем текста:** {word_count} слов
 
-**🏆 ОБЩИЙ БАЛЛ:** **{state['total_score']}/100**
-**🎯 ВЕРДИКТ:** {rec_emoji} **{state['recommendation']}**
+**🏆 ОБЩИЙ БАЛЛ:** **{total_score}/100**
+**🎯 ВЕРДИКТ:** {rec_emoji} **{recommendation}**
 
 ---
 
 **📈 ДЕТАЛИЗАЦИЯ:**
 
-• **Hard Skills** (35%): {s['hard_skills']}/35 {progress_bar(s['hard_skills'], 35)}
-• **Soft Skills** (25%): {s['soft_skills']}/25 {progress_bar(s['soft_skills'], 25)}
-• **Опыт** (25%): {s['experience']}/25 {progress_bar(s['experience'], 25)}
-• **Адаптивность** (15%): {s['adaptability']}/15 {progress_bar(s['adaptability'], 15)}
+• **Hard Skills** (35%): {s.get('hard_skills', 0)}/35 {progress_bar(s.get('hard_skills', 0), 35)}
+• **Soft Skills** (25%): {s.get('soft_skills', 0)}/25 {progress_bar(s.get('soft_skills', 0), 25)}
+• **Опыт** (25%): {s.get('experience', 0)}/25 {progress_bar(s.get('experience', 0), 25)}
+• **Адаптивность** (15%): {s.get('adaptability', 0)}/15 {progress_bar(s.get('adaptability', 0), 15)}
 
 ---
 
-**💬 {state['explanation']}**
+**💬 {explanation}**
 """
     state["final_output"] = output
     return state

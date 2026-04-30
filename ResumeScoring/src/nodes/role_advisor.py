@@ -23,7 +23,7 @@ ROLE_ADVISOR_PROMPT = """
 - Общий балл: {total_score}/100
 - Рекомендация: {recommendation}
 
-### Возможные роли:
+### Примеры IT-ролей:
 - Backend-разработчик
 - Frontend-разработчик
 - Data Scientist

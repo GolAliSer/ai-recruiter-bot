@@ -7,6 +7,7 @@ from datetime import datetime
 from src.graph import app_graph
 from src.utils import extract_text_from_file
 from src.database import get_feedback_stats, get_user_history, save_evaluation, save_feedback
+from src.rag_memory import add_successful_example
 
 
 def format_detailed_result(result: dict) -> str:
@@ -21,7 +22,7 @@ def format_detailed_result(result: dict) -> str:
     }.get(result["recommendation"], "⚪")
 
     def progress_bar(value, max_val, width=10):
-        filled = int(width * value / max_val)
+        filled = int(width * value / max_val) if max_val > 0 else 0
         return "█" * filled + "░" * (width - filled)
 
     output = f"""
@@ -42,8 +43,15 @@ def format_detailed_result(result: dict) -> str:
     return output
 
 
-def render_feedback_form(evaluation_id: int):
-    """Отрисовывает форму фидбека с помощью Streamlit"""
+def render_feedback_form(evaluation_id: int, resume_text: str = None, evaluation_result: dict = None):
+    """
+    Отрисовывает форму фидбека с помощью Streamlit.
+
+    Args:
+        evaluation_id: ID оценки в БД
+        resume_text: Текст резюме (нужен для RAG)
+        evaluation_result: Результат оценки (нужен для RAG)
+    """
     if evaluation_id:
         with st.container():
             st.markdown("**📝 Оцените точность этого анализа:**")
@@ -68,27 +76,46 @@ def render_feedback_form(evaluation_id: int):
                 submitted = st.form_submit_button("📤 Отправить фидбек", use_container_width=True)
 
                 if submitted:
+                    # 1. Сохраняем фидбек в SQLite
                     save_feedback(evaluation_id, rating, comment)
-                    st.success("✅ Спасибо за фидбек!")
+
+                    # 2. Если рейтинг высокий (4 или 5) и есть данные для RAG
+                    if rating >= 4 and resume_text and evaluation_result:
+                        success = add_successful_example(
+                            resume_text=resume_text,
+                            evaluation_result=evaluation_result,
+                            rating=rating
+                        )
+                        if success:
+                            st.success("✅ Спасибо за фидбек! Этот пример сохранён для улучшения будущих оценок.")
+                        else:
+                            st.success("✅ Спасибо за фидбек!")
+                    else:
+                        st.success("✅ Спасибо за фидбек!")
+
                     st.rerun()
 
 
-def format_results_table(results: list) -> str:
-    """Форматирует таблицу результатов"""
+def format_results_table(results: list) -> tuple:
+    """
+    Форматирует таблицу результатов с краткими пояснениями.
+    Возвращает (таблица_в_markdown, отсортированный_список_результатов)
+    """
     # Сортируем по баллам
     results_sorted = sorted(results, key=lambda x: x["total_score"], reverse=True)
 
     # Создаем строку таблицы
-    table = "| # | Файл | Роль | Балл | Рекомендация |\n"
-    table += "|---|------|------|------|--------------|\n"
+    table = "| # | Файл | Роль | Балл | Рекомендация | Краткое обоснование |\n"
+    table += "|---|------|------|------|--------------|---------------------|\n"
 
     for i, r in enumerate(results_sorted, 1):
-        table += f"| {i} | {r['file_name'][:30]} | {r['detected_role'][:15]} | **{r['total_score']}** | {r['recommendation']} |\n"
+        short_exp = r["explanation"][:60] + "..." if len(r["explanation"]) > 60 else r["explanation"]
+        table += f"| {i} | {r['file_name'][:30]} | {r['detected_role'][:15]} | **{r['total_score']}** | {r['recommendation']} | {short_exp} |\n"
 
     return table, results_sorted
 
 
-def export_to_csv(results: list) -> str:
+def export_to_csv(results: list) -> bytes:
     """Экспортирует результаты в CSV"""
     df = pd.DataFrame([{
         "Файл": r["file_name"],
@@ -124,10 +151,14 @@ def save_evaluation_to_db(user_id: int, result: dict) -> int:
     )
 
 
-def handle_scoring(user_id: int, file_names: list, uploaded_files: list):
-    """Обработка запроса на оценку резюме (одиночная или массовая)"""
+def handle_scoring(user_id: int, file_names: list, uploaded_files: list) -> tuple:
+    """
+    Обработка запроса на оценку резюме (одиночная или массовая).
+    Возвращает (тип_результата, вывод, результаты, evaluation_ids)
+    тип_результата: "single", "batch", "error"
+    """
     if not uploaded_files:
-        return "❌ Пожалуйста, загрузите файл резюме для оценки.", [], []
+        return "error", "❌ Пожалуйста, загрузите файл резюме для оценки.", [], []
 
     results = []
     evaluation_ids = []
@@ -159,19 +190,24 @@ def handle_scoring(user_id: int, file_names: list, uploaded_files: list):
                 evaluation_ids.append(None)
 
     if not results:
-        return "❌ Не удалось обработать файлы.", [], []
+        return "error", "❌ Не удалось обработать файлы.", [], []
 
-    # Формируем таблицу
+    # Если один файл — детальный вывод
+    if len(results) == 1:
+        output = format_detailed_result(results[0])
+        return "single", output, results, evaluation_ids
+
+    # Если несколько файлов — таблица
     table, results_sorted = format_results_table(results)
-
-    # Формируем полный вывод
     output = f"### 📊 Результаты оценки ({len(results)} файлов)\n\n{table}\n\n"
+    return "batch", output, results_sorted, evaluation_ids
 
-    return output, results_sorted, evaluation_ids
 
-
-def handle_compare(user_id: int, file_names: list, uploaded_files: list):
-    """Обработка запроса на сравнение двух резюме"""
+def handle_compare(user_id: int, file_names: list, uploaded_files: list) -> tuple:
+    """
+    Обработка запроса на сравнение двух резюме.
+    Возвращает (вывод, результаты, evaluation_ids)
+    """
     if len(uploaded_files) < 2:
         return "❌ Для сравнения нужно загрузить минимум 2 резюме.", [], []
 

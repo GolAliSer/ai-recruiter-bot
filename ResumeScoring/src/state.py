@@ -10,8 +10,8 @@ class ResumeState(TypedDict):
     cleaned_text: str
     word_count: int
     detected_role: str
-    role_confidence: int      # НОВОЕ: уверенность в определении роли (0-100)
-    role_reasoning: str       # НОВОЕ: обоснование выбора роли
+    role_confidence: int      
+    role_reasoning: str       
     scores: Dict[str, int]
     total_score: int
     recommendation: str

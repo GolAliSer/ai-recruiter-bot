@@ -21,7 +21,7 @@
 ## Скриншоты
 
 | Главный экран |
-| ![Главный экран](ResumeScoring/data/screen_main.png) | 
+ ![Главный экран](ResumeScoring/data/screen_main.png) 
 
 ---
 
